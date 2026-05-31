@@ -1,0 +1,389 @@
+# slot_machine.py
+# ─────────────────────────────────────────────────────────────────────────────
+# Проста гра-слот машина на pygame.
+# Запуск: python slot_machine.py
+# Залежності: pip install pygame
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pygame
+import random
+import sys
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  НАЛАШТУВАННЯ
+# ═══════════════════════════════════════════════════════════════════════════════
+
+W, H = 820, 610
+FPS  = 60
+
+# Символи: (назва для відображення, колір, множник виграшу при x3)
+SYMBOLS = [
+    ("7",   (220,  40,  40), 10),
+    ("BAR", (210, 175,  25),  6),
+    ("GEM", ( 70, 160, 230),  4),
+    ("BEL", (220, 200,  50),  3),
+    ("CHR", (200,  60, 100),  2),
+]
+
+# Розташування барабанів
+N_REELS  = 3
+ROWS     = 3
+CELL_W   = 140
+CELL_H   = 100
+GAP      = 18
+REELS_W  = N_REELS * CELL_W + (N_REELS - 1) * GAP   # 456
+REELS_X  = W // 2 - REELS_W // 2                      # 182
+REELS_Y  = 95
+REELS_H  = ROWS * CELL_H                              # 300
+
+# Коли зупиняється кожен барабан (у фреймах від початку оберту)
+STOP_AT  = [55, 85, 115]
+SPIN_END = 140    # коли перевіряємо результат
+
+# Кольори
+C_BG       = ( 15,  10,  25)
+C_REEL_BG  = ( 28,  20,  44)
+C_REEL_BDR = ( 85,  65, 125)
+C_WHITE    = (255, 255, 255)
+C_YELLOW   = (230, 200,  30)
+C_GOLD     = (210, 175,  25)
+C_GRAY     = (120, 120, 120)
+C_GREEN    = ( 40, 190,  65)
+C_RED      = (200,  40,  40)
+C_BLACK    = (  0,   0,   0)
+C_DIM      = ( 50,  40,  70)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  КЛАС БАРАБАНА
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class Reel:
+    """
+    Один барабан слот-машини.
+    Зберігає 3 видимі символи (рядки).
+    Під час оберту швидко змінює символи на випадкові,
+    потім фіксує заздалегідь обрахований результат.
+    """
+
+    ANIM_EVERY = 4   # міняти символи кожні N фреймів під час оберту
+
+    def __init__(self):
+        # поточні видимі символи (індекси у SYMBOLS)
+        self.shown    = [random.randrange(len(SYMBOLS)) for _ in range(ROWS)]
+        self.spinning = False
+        self._target  = []    # що буде показано після зупинки
+        self._tick    = 0
+
+    def start(self, target: list):
+        """Починаємо оберт, запам'ятовуємо цільові символи."""
+        self._target  = target[:]
+        self.spinning = True
+        self._tick    = 0
+
+    def update(self, stop: bool):
+        """
+        stop=True  → фіксуємо результат і зупиняємось.
+        stop=False → продовжуємо анімацію.
+        """
+        if not self.spinning:
+            return
+        if stop:
+            self.shown    = self._target[:]
+            self.spinning = False
+        else:
+            self._tick += 1
+            if self._tick >= self.ANIM_EVERY:
+                self._tick = 0
+                self.shown = [random.randrange(len(SYMBOLS)) for _ in range(ROWS)]
+
+    def draw(self, surf: pygame.Surface, x: int, y: int,
+             font_big: pygame.font.Font, font_sm: pygame.font.Font,
+             highlight_row: int = 1, win: bool = False):
+        """
+        Малює барабан із ROWS клітинок.
+        highlight_row — рядок лінії виплати.
+        win=True      — малює зелену рамку навколо клітинки виплати
+                        (показує гравцю що саме збіглось).
+        """
+        # фон барабану
+        rect = pygame.Rect(x, y, CELL_W, REELS_H)
+        pygame.draw.rect(surf, C_REEL_BG,  rect)
+        pygame.draw.rect(surf, C_REEL_BDR, rect, 2)
+
+        for row, sym_idx in enumerate(self.shown):
+            label, color, _ = SYMBOLS[sym_idx]
+            cy = y + row * CELL_H + CELL_H // 2
+
+            # фон клітинки лінії виплати
+            if row == highlight_row:
+                hi_col  = (38, 72, 38) if win else (50, 42, 70)
+                hi_rect = pygame.Rect(x + 2, y + row * CELL_H + 2,
+                                      CELL_W - 4, CELL_H - 4)
+                pygame.draw.rect(surf, hi_col, hi_rect)
+                # зелена рамка при виграші
+                if win:
+                    pygame.draw.rect(surf, C_GREEN, hi_rect, 3)
+
+            # символ по центру клітинки
+            txt = font_big.render(label, True, color)
+            surf.blit(txt, (x + CELL_W // 2 - txt.get_width()  // 2,
+                            cy         - txt.get_height() // 2))
+
+            # роздільна лінія між клітинками
+            if row < ROWS - 1:
+                ly = y + (row + 1) * CELL_H
+                pygame.draw.line(surf, C_REEL_BDR, (x, ly), (x + CELL_W, ly), 1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  КЛАС СЛОТ-МАШИНИ
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SlotMachine:
+    """
+    Управляє станом гри:
+      'idle'     — чекає натискання Spin
+      'spinning' — барабани крутяться
+      'result'   — показує результат, чекає наступного ходу
+    """
+
+    PAYLINE_ROW = 1     # середній рядок = лінія виплати
+
+    def __init__(self, surf: pygame.Surface, fonts: dict):
+        self.surf  = surf
+        self.fonts = fonts
+
+        self.balance = 500
+        self.bet     = 10
+        self.state   = "idle"
+        self.frame   = 0          # лічильник фреймів поточного оберту
+        self.message = ""         # текст результату
+        self.win_amt = 0          # виграш у поточному раунді
+
+        self.reels     = [Reel() for _ in range(N_REELS)]
+        self._results  = []       # список цільових символів для кожного барабану
+        self.win_reels = []       # індекси барабанів що підсвічуються як виграшні
+
+        # зони кнопок
+        self._btn_spin     = pygame.Rect(W // 2 - 90,  REELS_Y + REELS_H + 32,  180, 50)
+        self._btn_bet_down = pygame.Rect(W // 2 - 155, REELS_Y + REELS_H + 100, 40, 36)
+        self._btn_bet_up   = pygame.Rect(W // 2 + 115, REELS_Y + REELS_H + 100, 40, 36)
+
+    # ── обробка кліку ──────────────────────────────────────────────────────────
+    def handle_click(self, pos: tuple):
+        if self.state == "idle":
+            if self._btn_spin.collidepoint(pos):
+                self._start_spin()
+            elif self._btn_bet_up.collidepoint(pos):
+                self.bet = min(100, self.bet + 10)
+            elif self._btn_bet_down.collidepoint(pos):
+                self.bet = max(10, self.bet - 10)
+
+        elif self.state == "result":
+            if self._btn_spin.collidepoint(pos):
+                self.state     = "idle"
+                self.message   = ""
+                self.win_amt   = 0
+                self.win_reels = []
+
+    # ── старт оберту ──────────────────────────────────────────────────────────
+    def _start_spin(self):
+        if self.balance < self.bet:
+            self.message = "Недостатньо балансу!"
+            return
+        self.balance -= self.bet
+        self.frame    = 0
+        self.state    = "spinning"
+        self.message  = ""
+        self.win_reels = [] # Очищення підсвічування при новому старті
+
+        # обрахувати результат заздалегідь
+        self._results = [
+            [random.randrange(len(SYMBOLS)) for _ in range(ROWS)]
+            for _ in range(N_REELS)
+        ]
+        for reel, target in zip(self.reels, self._results):
+            reel.start(target)
+
+    # ── перевірка виграшу ─────────────────────────────────────────────────────
+    def _check_win(self):
+        # Читаємо безпосередньо з reel.shown — те що відображається на екрані.
+        payline = [self.reels[r].shown[self.PAYLINE_ROW] for r in range(N_REELS)]
+
+        if payline[0] == payline[1] == payline[2]:
+            # три однакові — повний виграш
+            _, _, mult     = SYMBOLS[payline[0]]
+            self.win_amt   = self.bet * mult
+            self.balance  += self.win_amt
+            self.message   = f"ПЕРЕМОГА!  +{self.win_amt}"
+            self.win_reels = [0, 1, 2]
+
+        elif payline[0] == payline[1]:
+            # перші два однакові — невелика нагорода
+            _, _, mult     = SYMBOLS[payline[0]]
+            self.win_amt   = self.bet * max(1, mult // 3)
+            self.balance  += self.win_amt
+            self.message   = f"2 поспіль!  +{self.win_amt}"
+            self.win_reels = [0, 1]
+
+        elif payline[1] == payline[2]:
+            # останні два однакові — невелика нагорода
+            _, _, mult     = SYMBOLS[payline[1]]
+            self.win_amt   = self.bet * max(1, mult // 3)
+            self.balance  += self.win_amt
+            self.message   = f"2 поспіль!  +{self.win_amt}"
+            self.win_reels = [1, 2]
+
+        else:
+            self.win_amt   = 0
+            self.win_reels = []
+            self.message   = "Не пощастило..."
+
+    # ── update ────────────────────────────────────────────────────────────────
+    def update(self):
+        if self.state != "spinning":
+            return
+        self.frame += 1
+        for i, reel in enumerate(self.reels):
+            reel.update(stop=(self.frame >= STOP_AT[i]))
+        if self.frame >= SPIN_END:
+            self._check_win()
+            self.state = "result"
+
+    # ── draw ──────────────────────────────────────────────────────────────────
+    def draw(self):
+        surf  = self.surf
+        f_big = self.fonts["big"]
+        f_med = self.fonts["med"]
+        f_sm  = self.fonts["sm"]
+
+        surf.fill(C_BG)
+
+        # ── заголовок ─────────────────────────────────────────────────────────
+        title = f_big.render("SLOT  MACHINE", True, C_YELLOW)
+        surf.blit(title, (W // 2 - title.get_width() // 2, 18))
+
+        # ── лінія виплати (горизонтальна) ─────────────────────────────────────
+        pl_y = REELS_Y + self.PAYLINE_ROW * CELL_H + CELL_H // 2
+        pygame.draw.line(surf, C_GOLD,
+                         (REELS_X - 14, pl_y),
+                         (REELS_X + REELS_W + 14, pl_y), 2)
+        # мітки "PAY" зліва і справа
+        lbl = f_sm.render("PAY", True, C_GOLD)
+        surf.blit(lbl, (REELS_X - 14 - lbl.get_width() - 4, pl_y - lbl.get_height() // 2))
+        surf.blit(lbl, (REELS_X + REELS_W + 18, pl_y - lbl.get_height() // 2))
+
+        # ── барабани ──────────────────────────────────────────────────────────
+        for i, reel in enumerate(self.reels):
+            rx = REELS_X + i * (CELL_W + GAP)
+            # Виправлення: передаємо параметр win у функцію відмальовування
+            is_win = i in self.win_reels
+            reel.draw(surf, rx, REELS_Y, f_big, f_sm, self.PAYLINE_ROW, win=is_win)
+
+        # ── баланс ────────────────────────────────────────────────────────────
+        bal = f_med.render(f"Баланс:  {self.balance}", True, C_WHITE)
+        surf.blit(bal, (W // 2 - bal.get_width() // 2, REELS_Y + REELS_H + 4))
+
+        # ── кнопка SPIN ───────────────────────────────────────────────────────
+        spinning = (self.state == "spinning")
+        btn_color = C_DIM if spinning else (35, 110, 40)
+        pygame.draw.rect(surf, btn_color,  self._btn_spin, border_radius=8)
+        pygame.draw.rect(surf, C_WHITE,    self._btn_spin, 2, border_radius=8)
+        btn_lbl = "КРУТИТИ" if self.state != "result" else "ДАЛІ"
+        bt = f_med.render(btn_lbl, True, C_WHITE)
+        surf.blit(bt, (self._btn_spin.centerx - bt.get_width()  // 2,
+                       self._btn_spin.centery - bt.get_height() // 2))
+
+        # ── ставка ────────────────────────────────────────────────────────────
+        bet_lbl = f_med.render(f"Ставка:  {self.bet}", True, C_YELLOW)
+        surf.blit(bet_lbl, (W // 2 - bet_lbl.get_width() // 2,
+                             REELS_Y + REELS_H + 103))
+
+        for btn, lbl_txt in [(self._btn_bet_down, "-"), (self._btn_bet_up, "+")]:
+            active = (self.state == "idle")
+            col = (45, 38, 68) if active else C_DIM
+            pygame.draw.rect(surf, col,     btn, border_radius=4)
+            pygame.draw.rect(surf, C_GRAY,  btn, 1, border_radius=4)
+            t = f_med.render(lbl_txt, True, C_WHITE if active else C_GRAY)
+            surf.blit(t, (btn.centerx - t.get_width()  // 2,
+                          btn.centery - t.get_height() // 2))
+
+        # ── повідомлення про результат ────────────────────────────────────────
+        if self.message:
+            if "ПЕРЕМОГА" in self.message:
+                col = C_GREEN
+            elif "2 поспіль" in self.message:
+                col = C_YELLOW
+            elif "Не" in self.message:
+                col = C_RED
+            else:
+                col = C_YELLOW
+            msg = f_big.render(self.message, True, col)
+            surf.blit(msg, (W // 2 - msg.get_width() // 2,
+                            REELS_Y + REELS_H + 150))
+
+        # ── таблиця виплат (справа) ───────────────────────────────────────────
+        tx = REELS_X + REELS_W + 30
+        ty = REELS_Y
+
+        hdr = f_sm.render("Виплати (x3):", True, C_GRAY)
+        surf.blit(hdr, (tx, ty))
+        ty += 22
+        for label, color, mult in SYMBOLS:
+            surf.blit(f_sm.render(f"  {label:<4}  x{mult}", True, color), (tx, ty))
+            ty += 20
+
+        ty += 10
+        hdr2 = f_sm.render("2 поспіль:", True, C_GRAY)
+        surf.blit(hdr2, (tx, ty))
+        ty += 22
+        for label, color, mult in SYMBOLS:
+            partial = max(1, mult // 3)
+            dim_col = tuple(max(0, c - 70) for c in color)
+            surf.blit(f_sm.render(f"  {label:<4}  x{partial}", True, dim_col), (tx, ty))
+            ty += 20
+
+        # ── підказка знизу ────────────────────────────────────────────────────
+        hint = f_sm.render("Лінія виплати — середній рядок", True, C_GRAY)
+        surf.blit(hint, (W // 2 - hint.get_width() // 2, H - 24))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ГОЛОВНИЙ ЦИКЛ
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((W, H))
+    pygame.display.set_caption("Slot Machine")
+    clock  = pygame.time.Clock()
+
+    fonts = {
+        "big": pygame.font.SysFont("consolas", 42, bold=True),
+        "med": pygame.font.SysFont("consolas", 26),
+        "sm":  pygame.font.SysFont("consolas", 18),
+    }
+
+    game = SlotMachine(screen, fonts)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                game.handle_click(ev.pos)
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_SPACE and game.state == "idle":
+                    game.handle_click(game._btn_spin.center)
+                if ev.key == pygame.K_RETURN and game.state == "result":
+                    game.handle_click(game._btn_spin.center)
+
+        game.update()
+        game.draw()
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
+if __name__ == "__main__":
+    main()
