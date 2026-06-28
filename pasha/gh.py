@@ -1,4 +1,3 @@
-
 import sys
 import random
 import pygame
@@ -10,11 +9,11 @@ W, H = 820, 610
 FPS = 60
 
 SYMBOLS = [
-    ("BUL", (220, 40, 40), 10),
+    ("BULBA", (220, 40, 40), 10),
     ("7", (210, 175, 25), 6),
-    ("BAR", (70, 160, 230), 4),
-    ("SHT", (220, 200, 50), 3),
-    ("FUR", (200, 60, 100), 2),
+    ("Goat", (70, 160, 230), 4),
+    ("BAR", (220, 200, 50), 3),
+    ("BEER", (200, 60, 100), 2),
 ]
 
 N_REELS = 3
@@ -48,10 +47,6 @@ C_DIM = (50, 40, 70)
 #         КЛАС БАРАБАНА
 # ═════════════════════════════
 class Reel:
-    """
-    Один барабан слот-машини.
-    Зберігає 3 видимі символи (рядки).
-    """
     ANIM_EVERY = 4
 
     def __init__(self):
@@ -109,13 +104,7 @@ class Reel:
 # ═══════════════════════════════════════════
 
 class КазіноUA:
-    """
-    Управляє станом гри:
-      'menu'     — головне меню (очікування старту)
-      'idle'     — чекає натискання Spin
-      'spinning' — барабани крутяться
-      'result'   — показує результат, чекає наступного ходу
-    """
+
     PAYLINE_ROW = 1
 
     def __init__(self, surf: pygame.Surface, fonts: dict):
@@ -155,7 +144,7 @@ class КазіноUA:
             if self._btn_spin.collidepoint(pos):
                 self._start_spin()
             elif self._btn_bet_up.collidepoint(pos):
-                self.bet = min(100, self.bet + 25)
+                self.bet = min(500, self.bet + 25)
             elif self._btn_bet_down.collidepoint(pos):
                 self.bet = max(25, self.bet - 25)
 
@@ -212,6 +201,12 @@ class КазіноUA:
             self.win_amt = 0
             self.win_reels = []
             self.message = "Не пощастило..."
+
+        # ВИЛЬОТ З ГРИ: якщо баланс менший за мінімальну ставку (25)
+        if self.balance < 25:
+            print("Баланс закінчився! Виліт...")
+            pygame.quit()
+            sys.exit()
 
     # ── update ────────────────────────────────────────────────────────────────
     def update(self):
@@ -323,14 +318,14 @@ class КазіноUA:
         # Кнопка СТАРТ
         pygame.draw.rect(self.surf, (35, 110, 40), self._btn_start, border_radius=10)
         pygame.draw.rect(self.surf, C_WHITE, self._btn_start, 2, border_radius=10)
-        txt_start = f_med.render("ГРАТИ", True, C_WHITE)
+        txt_start = f_med.render("Почати Деп", True, C_WHITE)
         self.surf.blit(txt_start, (self._btn_start.centerx - txt_start.get_width() // 2,
                                    self._btn_start.centery - txt_start.get_height() // 2))
 
         # Кнопка ВИХІД
         pygame.draw.rect(self.surf, (140, 35, 35), self._btn_exit, border_radius=10)
         pygame.draw.rect(self.surf, C_WHITE, self._btn_exit, 2, border_radius=10)
-        txt_exit = f_med.render("ВИХІД", True, C_WHITE)
+        txt_exit = f_med.render("Вийти в вікно", True, C_WHITE)
         self.surf.blit(txt_exit, (self._btn_exit.centerx - txt_exit.get_width() // 2,
                                   self._btn_exit.centery - txt_exit.get_height() // 2))
 
